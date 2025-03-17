@@ -9,7 +9,6 @@ import shutil
 import copy
 
 import torch
-from torch import cuda
 import torch.nn as nn
 from torch.autograd import Variable
 from torch.nn.parameter import Parameter
@@ -59,6 +58,10 @@ parser.add_argument('--print_every', type=int, default=500, help='print stats af
 
 
 def main(args):
+  print(torch.get_default_device())
+  mps_device = torch.device("mps")
+  torch.set_default_device("mps")
+  print(torch.get_default_device())
   np.random.seed(args.seed)
   torch.manual_seed(args.seed)
   train_data = Dataset(args.train_file)
@@ -68,7 +71,7 @@ def main(args):
         (train_data.sents.size(0), len(train_data), val_data.sents.size(0), 
          len(val_data)))
   print('Vocab size: %d' % vocab_size)
-  cuda.set_device(args.gpu)
+  # cuda.set_device(args.gpu)
   if args.train_from == '':
     model = RNNG(vocab = vocab_size,
                  w_dim = args.w_dim, 
@@ -102,7 +105,7 @@ def main(args):
   q_optimizer = torch.optim.Adam(q_params, lr=q_lr)
   action_optimizer = torch.optim.SGD(action_params, lr=args.action_lr)
   model.train()
-  model.cuda()
+  model.to()
 
   epoch = 0
   decay= 0
@@ -140,7 +143,7 @@ def main(args):
       if length == 1:
         # we ignore length 1 sents during training/eval since we work with binary trees only
         continue
-      sents = sents.cuda()
+      sents = sents.to()
       b += 1
       q_optimizer.zero_grad()
       optimizer.zero_grad()
@@ -222,7 +225,7 @@ def main(args):
       }
       print('Saving checkpoint to %s' % args.save_path)
       torch.save(checkpoint, args.save_path)
-      model.cuda()
+      model.to()
     else:
       if epoch > args.min_epochs:
         decay = 1
@@ -260,7 +263,7 @@ def eval(data, model, samples = 0, count_eos_ppl = 0):
       else:
         sents = sents[:, :-1] 
         tree_length = length
-      sents = sents.cuda()
+      sents = sents.to()
       ll_word_all, ll_action_p_all, ll_action_q_all, actions_all, q_entropy = model(sents, 
                     samples = samples, has_eos = count_eos_ppl == 1)
       ll_word, ll_action_p, ll_action_q = ll_word_all.mean(1), ll_action_p_all.mean(1), ll_action_q_all.mean(1)

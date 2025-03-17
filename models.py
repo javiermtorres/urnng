@@ -31,7 +31,7 @@ class RNNLM(nn.Module):
   
   def generate(self, bos = 2, eos = 3, max_len = 150):
     x = []
-    bos = torch.LongTensor(1,1).cuda().fill_(bos)
+    bos = torch.LongTensor(1,1).to().fill_(bos)
     emb = self.dropout(self.word_vecs(bos))
     prev_h = None
     for l in range(max_len):
@@ -114,8 +114,10 @@ class RNNG(nn.Module):
     super(RNNG, self).__init__()
     self.S = 0 #action idx for shift/generate
     self.R = 1 #action idx for reduce
-    self.emb = nn.Embedding(vocab, w_dim)
-    self.dropout = nn.Dropout(dropout)    
+    self.emb = nn.Embedding(vocab, w_dim, device=torch.get_default_device())
+    print(f'--> {self.emb}')
+    self.dropout = nn.Dropout(dropout)
+    self.dropout.to(torch.get_default_device())
     self.stack_rnn = SeqLSTM(w_dim, h_dim, num_layers = num_layers, dropout = dropout)
     self.tree_rnn = TreeLSTM(w_dim)
     self.vocab_mlp = nn.Sequential(nn.Dropout(dropout), nn.Linear(h_dim, vocab))
@@ -139,7 +141,7 @@ class RNNG(nn.Module):
     eos  = x.new(x.size(0), 1).fill_(self.pad2)
     x = torch.cat([bos, x, eos], 1)
     x_vec = self.dropout(self.emb(x))
-    pos = torch.arange(0, x.size(1)).unsqueeze(0).expand_as(x).long().cuda()
+    pos = torch.arange(0, x.size(1)).unsqueeze(0).expand_as(x).long().to()
     x_vec = x_vec + self.dropout(self.q_pos_emb(pos))
     q_h, _ = self.q_leaf_rnn(x_vec)
     fwd = q_h[:, 1:, :self.q_dim]
@@ -172,6 +174,7 @@ class RNNG(nn.Module):
     #Note that </s> is predicted for training since we want the model to know when to stop.
     #However it is ignored for PPL evaluation on the version of the PTB dataset from
     #the original RNNG paper (Dyer et al. 2016)
+    x.to(torch.get_default_device())
     init_emb = self.dropout(self.emb(x[:, 0]))
     x = x[:, 1:]
     batch, length = x.size(0), x.size(1)
@@ -202,7 +205,7 @@ class RNNG(nn.Module):
         actions.append(action + [self.S, self.R]) #we train the model to generate <s> and then do a final reduce
       else:
         actions.append(action)
-    actions = torch.Tensor(actions).float().cuda()
+    actions = torch.Tensor(actions).float().to()
     action_masks = self.get_action_masks(actions, length) 
     num_action = 2*length - 1
     batch_expand = batch*samples
@@ -304,7 +307,7 @@ class RNNG(nn.Module):
       actions = new_actions
     batch, length = x.size(0), x.size(1)
     word_vecs =  self.dropout(self.emb(x))
-    actions = torch.Tensor(actions).float().cuda()
+    actions = torch.Tensor(actions).float().to()
     action_masks = self.get_action_masks(actions, length)
     num_action = 2*length - 1
     contexts = []
@@ -391,7 +394,7 @@ class RNNG(nn.Module):
     crf_input = scores
     gold_spans = scores.new(batch, length, length)
     for b in range(batch):
-      gold_spans[b].copy_(torch.eye(length).cuda())
+      gold_spans[b].copy_(torch.eye(length).to())
       spans = get_spans(actions[b])
       for span in spans:
         gold_spans[b][span[0]][span[1]] = 1
