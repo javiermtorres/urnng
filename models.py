@@ -14,11 +14,11 @@ class RNNLM(nn.Module):
                dropout=0.5):
     super(RNNLM, self).__init__()
     self.h_dim = h_dim
-    self.num_layers = num_layers    
+    self.num_layers = num_layers
     self.word_vecs = nn.Embedding(vocab, w_dim)
     self.dropout = nn.Dropout(dropout)
     self.rnn = nn.LSTM(w_dim, h_dim, num_layers = num_layers,
-                       dropout = dropout, batch_first = True)      
+                       dropout = dropout, batch_first = True)
     self.vocab_linear =  nn.Linear(h_dim, vocab)
     self.vocab_linear.weight = self.word_vecs.weight # weight sharing
 
@@ -28,10 +28,10 @@ class RNNLM(nn.Module):
     log_prob = F.log_softmax(self.vocab_linear(self.dropout(h)), 2) # b x l x v
     ll = torch.gather(log_prob, 2, sent[:, 1:].unsqueeze(2)).squeeze(2)
     return ll.sum(1)
-  
+
   def generate(self, bos = 2, eos = 3, max_len = 150):
     x = []
-    bos = torch.LongTensor(1,1).to().fill_(bos)
+    bos = torch.LongTensor(1,1).to(torch.get_default_device()).fill_(bos)
     emb = self.dropout(self.word_vecs(bos))
     prev_h = None
     for l in range(max_len):
@@ -50,7 +50,7 @@ class SeqLSTM(nn.Module):
                h_dim = 0,
                num_layers = 1,
                dropout = 0):
-    super(SeqLSTM, self).__init__()    
+    super(SeqLSTM, self).__init__()
     self.i_dim = i_dim
     self.h_dim = h_dim
     self.num_layers = num_layers
@@ -84,12 +84,12 @@ class TreeLSTM(nn.Module):
 
   def forward(self, x1, x2, e=None):
     if not isinstance(x1, tuple):
-      x1 = (x1, None)    
-    h1, c1 = x1 
-    if x2 is None: 
+      x1 = (x1, None)
+    h1, c1 = x1
+    if x2 is None:
       x2 = (torch.zeros_like(h1), torch.zeros_like(h1))
     elif not isinstance(x2, tuple):
-      x2 = (x2, None)    
+      x2 = (x2, None)
     h2, c2 = x2
     if c1 is None:
       c1 = torch.zeros_like(h1)
@@ -102,10 +102,10 @@ class TreeLSTM(nn.Module):
     c = F.sigmoid(f1)*c1 + F.sigmoid(f2)*c2 + F.sigmoid(i)*F.tanh(g)
     h = F.sigmoid(o)*F.tanh(c)
     return (h, c)
-      
+
 class RNNG(nn.Module):
   def __init__(self, vocab = 100,
-               w_dim = 20, 
+               w_dim = 20,
                h_dim = 20,
                num_layers = 1,
                dropout = 0,
@@ -115,7 +115,6 @@ class RNNG(nn.Module):
     self.S = 0 #action idx for shift/generate
     self.R = 1 #action idx for reduce
     self.emb = nn.Embedding(vocab, w_dim, device=torch.get_default_device())
-    print(f'--> {self.emb}')
     self.dropout = nn.Dropout(dropout)
     self.dropout.to(torch.get_default_device())
     self.stack_rnn = SeqLSTM(w_dim, h_dim, num_layers = num_layers, dropout = dropout)
@@ -127,11 +126,11 @@ class RNNG(nn.Module):
     self.action_mlp_p = nn.Sequential(nn.Dropout(dropout), nn.Linear(h_dim, 1))
     self.w_dim = w_dim
     self.h_dim = h_dim
-    self.q_dim = q_dim    
+    self.q_dim = q_dim
     self.q_leaf_rnn = nn.LSTM(w_dim, q_dim, bidirectional = True, batch_first = True)
     self.q_crf = ConstituencyTreeCRF()
     self.pad1 = 0 # idx for <s> token from ptb.dict
-    self.pad2 = 2 # idx for </s> token from ptb.dict 
+    self.pad2 = 2 # idx for </s> token from ptb.dict
     self.q_pos_emb = nn.Embedding(max_len, w_dim) # position embeddings
     self.vocab_mlp[-1].weight = self.emb.weight #share embeddings
 
@@ -141,7 +140,7 @@ class RNNG(nn.Module):
     eos  = x.new(x.size(0), 1).fill_(self.pad2)
     x = torch.cat([bos, x, eos], 1)
     x_vec = self.dropout(self.emb(x))
-    pos = torch.arange(0, x.size(1)).unsqueeze(0).expand_as(x).long().to()
+    pos = torch.arange(0, x.size(1)).unsqueeze(0).expand_as(x).long().to(torch.get_default_device())
     x_vec = x_vec + self.dropout(self.q_pos_emb(pos))
     q_h, _ = self.q_leaf_rnn(x_vec)
     fwd = q_h[:, 1:, :self.q_dim]
@@ -156,7 +155,7 @@ class RNNG(nn.Module):
     #this masks out actions so that we don't incur a loss if some actions are deterministic
     #in practice this doesn't really seem to matter
     mask = actions.new(actions.size(0), actions.size(1)).fill_(1)
-    for b in range(actions.size(0)):      
+    for b in range(actions.size(0)):
       num_shift = 0
       stack_len = 0
       for l in range(actions.size(1)):
@@ -170,7 +169,7 @@ class RNNG(nn.Module):
     return mask
 
   def forward(self, x, samples = 1, is_temp = 1., has_eos=True):
-    #For has eos, if </s> exists, then inference network ignores it. 
+    #For has eos, if </s> exists, then inference network ignores it.
     #Note that </s> is predicted for training since we want the model to know when to stop.
     #However it is ignored for PPL evaluation on the version of the PTB dataset from
     #the original RNNG paper (Dyer et al. 2016)
@@ -178,7 +177,7 @@ class RNNG(nn.Module):
     init_emb = self.dropout(self.emb(x[:, 0]))
     x = x[:, 1:]
     batch, length = x.size(0), x.size(1)
-    if has_eos: 
+    if has_eos:
       parse_length = length - 1
       parse_x = x[:, :-1]
     else:
@@ -196,17 +195,17 @@ class RNNG(nn.Module):
     for i in range(len(self.q_crf.alpha)):
       for j in range(len(self.q_crf.alpha)):
         self.q_crf.alpha[i][j] = self.q_crf.alpha[i][j].unsqueeze(1).expand(
-          batch, samples).contiguous().view(batch*samples)        
+          batch, samples).contiguous().view(batch*samples)
     _, log_probs_action_q, tree_brackets, spans = self.q_crf._sample(crf_input, self.q_crf.alpha)
     actions = []
-    for b in range(crf_input.size(0)):    
+    for b in range(crf_input.size(0)):
       action = get_actions(tree_brackets[b])
       if has_eos:
         actions.append(action + [self.S, self.R]) #we train the model to generate <s> and then do a final reduce
       else:
         actions.append(action)
-    actions = torch.Tensor(actions).float().to()
-    action_masks = self.get_action_masks(actions, length) 
+    actions = torch.Tensor(actions).float().to(torch.get_default_device())
+    action_masks = self.get_action_masks(actions, length)
     num_action = 2*length - 1
     batch_expand = batch*samples
     contexts = []
@@ -258,10 +257,10 @@ class RNNG(nn.Module):
         for k in range(self.num_layers):
           stack_h[k][0].append(stack2[b][-1][k][0])
           stack_h[k][1].append(stack2[b][-1][k][1])
-        if actions[b][l].item() == self.S:          
+        if actions[b][l].item() == self.S:
           input_b = word_vecs[b][pointer[b]]
           stack_child[b].append((word_vecs[b][pointer[b]], word_vecs_zeros[b][pointer[b]]))
-          pointer[b] += 1          
+          pointer[b] += 1
         else:
           input_b = new_child[0][child_idx].unsqueeze(0)
           stack_child[b].append((input_b, new_child[1][child_idx].unsqueeze(0)))
@@ -275,15 +274,15 @@ class RNNG(nn.Module):
       stack.append(stack_h)
       for b in range(batch_expand):
         stack2[b].append([[stack_h[k][0][b], stack_h[k][1][b]] for k in range(self.num_layers)])
-      
+
     contexts = torch.stack(contexts, 1) #stack contexts
-    action_logit_p = self.action_mlp_p(contexts).squeeze(2) 
+    action_logit_p = self.action_mlp_p(contexts).squeeze(2)
     action_prob_p = F.sigmoid(action_logit_p).clamp(min=1e-7, max=1-1e-7)
     action_shift_score = (1 - action_prob_p).log()
     action_reduce_score = action_prob_p.log()
     action_score = (1-actions)*action_shift_score + actions*action_reduce_score
     action_score = (action_score*action_masks).sum(1)
-    
+
     word_contexts = contexts[actions < 1]
     word_contexts = word_contexts.contiguous().view(batch*samples, length, self.h_dim)
 
@@ -299,7 +298,7 @@ class RNNG(nn.Module):
   def forward_actions(self, x, actions, has_eos=True):
     # this is for when ground through actions are available
     init_emb = self.dropout(self.emb(x[:, 0]))
-    x = x[:, 1:]    
+    x = x[:, 1:]
     if has_eos:
       new_actions = []
       for action in actions:
@@ -307,7 +306,7 @@ class RNNG(nn.Module):
       actions = new_actions
     batch, length = x.size(0), x.size(1)
     word_vecs =  self.dropout(self.emb(x))
-    actions = torch.Tensor(actions).float().to()
+    actions = torch.Tensor(actions).float().to(torch.get_default_device())
     action_masks = self.get_action_masks(actions, length)
     num_action = 2*length - 1
     contexts = []
@@ -352,10 +351,10 @@ class RNNG(nn.Module):
         for k in range(self.num_layers):
           stack_h[k][0].append(stack2[b][-1][k][0])
           stack_h[k][1].append(stack2[b][-1][k][1])
-        if actions[b][l].item() == self.S:          
+        if actions[b][l].item() == self.S:
           input_b = word_vecs[b][pointer[b]]
           stack_child[b].append((word_vecs[b][pointer[b]], word_vecs_zeros[b][pointer[b]]))
-          pointer[b] += 1          
+          pointer[b] += 1
         else:
           input_b = new_child[0][child_idx].unsqueeze(0)
           stack_child[b].append((input_b, new_child[1][child_idx].unsqueeze(0)))
@@ -376,7 +375,7 @@ class RNNG(nn.Module):
     action_reduce_score = action_prob_p.log()
     action_score = (1-actions)*action_shift_score + actions*action_reduce_score
     action_score = (action_score*action_masks).sum(1)
-    
+
     word_contexts = contexts[actions < 1]
     word_contexts = word_contexts.contiguous().view(batch, length, self.h_dim)
     log_probs_word = F.log_softmax(self.vocab_mlp(word_contexts), 2)
@@ -384,7 +383,7 @@ class RNNG(nn.Module):
     log_probs_action_p = action_score.contiguous().view(batch)
     actions = actions.contiguous().view(batch, 1, -1)
     return log_probs_word, log_probs_action_p, actions
-  
+
   def forward_tree(self, x, actions, has_eos=True):
     # this is log q( tree | x) for discriminative parser training in supervised RNNG
     init_emb = self.dropout(self.emb(x[:, 0]))
@@ -394,7 +393,7 @@ class RNNG(nn.Module):
     crf_input = scores
     gold_spans = scores.new(batch, length, length)
     for b in range(batch):
-      gold_spans[b].copy_(torch.eye(length).to())
+      gold_spans[b].copy_(torch.eye(length).to(torch.get_default_device()))
       spans = get_spans(actions[b])
       for span in spans:
         gold_spans[b][span[0]][span[1]] = 1
@@ -403,11 +402,11 @@ class RNNG(nn.Module):
     span_scores = (gold_spans*scores).sum(2).sum(1)
     ll_action_q = span_scores - log_Z
     return ll_action_q
-    
+
   def logsumexp(self, x, dim=1):
-    d = torch.max(x, dim)[0]    
+    d = torch.max(x, dim)[0]
     if x.dim() == 1:
       return torch.log(torch.exp(x - d).sum(dim)) + d
     else:
-      return torch.log(torch.exp(x - d.unsqueeze(dim).expand_as(x)).sum(dim)) + d    
-    
+      return torch.log(torch.exp(x - d.unsqueeze(dim).expand_as(x)).sum(dim)) + d
+

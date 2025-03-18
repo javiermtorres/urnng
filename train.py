@@ -39,9 +39,9 @@ parser.add_argument('--save_path', default='urnng.pt', help='where to save the d
 parser.add_argument('--num_epochs', default=18, type=int, help='number of training epochs')
 parser.add_argument('--min_epochs', default=8, type=int, help='do not decay learning rate for at least this many epochs')
 parser.add_argument('--mode', default='unsupervised', type=str, choices=['unsupervised', 'supervised'])
-parser.add_argument('--mc_samples', default=5, type=int, 
+parser.add_argument('--mc_samples', default=5, type=int,
                     help='how many samples for IWAE bound calc for evaluation')
-parser.add_argument('--samples', default=8, type=int, 
+parser.add_argument('--samples', default=8, type=int,
                     help='how many samples for score function gradients')
 parser.add_argument('--lr', default=1, type=float, help='starting learning rate')
 parser.add_argument('--q_lr', default=0.0001, type=float, help='learning rate for inference network q')
@@ -59,29 +59,29 @@ parser.add_argument('--print_every', type=int, default=500, help='print stats af
 
 def main(args):
   print(torch.get_default_device())
-  mps_device = torch.device("mps")
-  torch.set_default_device("mps")
+  gpu_device = torch.device("cuda")
+  torch.set_default_device("cuda")
   print(torch.get_default_device())
   np.random.seed(args.seed)
   torch.manual_seed(args.seed)
   train_data = Dataset(args.train_file)
-  val_data = Dataset(args.val_file)  
-  vocab_size = int(train_data.vocab_size)    
-  print('Train: %d sents / %d batches, Val: %d sents / %d batches' % 
-        (train_data.sents.size(0), len(train_data), val_data.sents.size(0), 
+  val_data = Dataset(args.val_file)
+  vocab_size = int(train_data.vocab_size)
+  print('Train: %d sents / %d batches, Val: %d sents / %d batches' %
+        (train_data.sents.size(0), len(train_data), val_data.sents.size(0),
          len(val_data)))
   print('Vocab size: %d' % vocab_size)
   # cuda.set_device(args.gpu)
   if args.train_from == '':
     model = RNNG(vocab = vocab_size,
-                 w_dim = args.w_dim, 
+                 w_dim = args.w_dim,
                  h_dim = args.h_dim,
                  dropout = args.dropout,
                  num_layers = args.num_layers,
                  q_dim = args.q_dim)
     if args.param_init > 0:
-      for param in model.parameters():    
-        param.data.uniform_(-args.param_init, args.param_init)      
+      for param in model.parameters():
+        param.data.uniform_(-args.param_init, args.param_init)
   else:
     print('loading model from ' + args.train_from)
     checkpoint = torch.load(args.train_from)
@@ -91,7 +91,7 @@ def main(args):
   q_params = []
   action_params = []
   model_params = []
-  for name, param in model.named_parameters():    
+  for name, param in model.named_parameters():
     if 'action' in name:
       print(name)
       action_params.append(param)
@@ -105,7 +105,7 @@ def main(args):
   q_optimizer = torch.optim.Adam(q_params, lr=q_lr)
   action_optimizer = torch.optim.SGD(action_params, lr=args.action_lr)
   model.train()
-  model.to()
+  model.to(torch.get_default_device())
 
   epoch = 0
   decay= 0
@@ -117,12 +117,12 @@ def main(args):
   best_val_ppl = 5e5
   best_val_f1 = 0
   samples = args.samples
-  best_val_ppl, best_val_f1 = eval(val_data, model, samples = args.mc_samples, 
+  best_val_ppl, best_val_f1 = eval(val_data, model, samples = args.mc_samples,
                                    count_eos_ppl = args.count_eos_ppl)
   all_stats = [[0., 0., 0.]] #true pos, false pos, false neg for f1 calc
   while epoch < args.num_epochs:
     start_time = time.time()
-    epoch += 1  
+    epoch += 1
     if epoch > args.train_q_epochs:
       #stop training q after this many epochs
       args.q_lr = 0.
@@ -138,18 +138,18 @@ def main(args):
     b = 0
     for i in np.random.permutation(len(train_data)):
       if args.kl_warmup > 0:
-        kl_pen = min(1., kl_pen + kl_warmup_batch) 
-      sents, length, batch_size, gold_actions, gold_spans, gold_binary_trees, other_data = train_data[i]      
+        kl_pen = min(1., kl_pen + kl_warmup_batch)
+      sents, length, batch_size, gold_actions, gold_spans, gold_binary_trees, other_data = train_data[i]
       if length == 1:
         # we ignore length 1 sents during training/eval since we work with binary trees only
         continue
-      sents = sents.to()
+      sents = sents.to(torch.get_default_device())
       b += 1
       q_optimizer.zero_grad()
       optimizer.zero_grad()
       action_optimizer.zero_grad()
       if args.mode == 'unsupervised':
-        ll_word, ll_action_p, ll_action_q, all_actions, q_entropy = model(sents, samples=samples, 
+        ll_word, ll_action_p, ll_action_q, all_actions, q_entropy = model(sents, samples=samples,
                                                                           has_eos = True)
         log_f = ll_word + kl_pen*ll_action_p
         iwae_ll = log_f.mean(1).detach() + kl_pen*q_entropy.detach()
@@ -161,14 +161,14 @@ def main(args):
           for k in range(samples):
             baseline_k.copy_(log_f)
             baseline_k[:, k].fill_(0)
-            baseline[:, k] =  baseline_k.detach().sum(1) / (samples - 1)        
-          obj += ((log_f.detach() - baseline.detach())*ll_action_q).mean(1)                      
+            baseline[:, k] =  baseline_k.detach().sum(1) / (samples - 1)
+          obj += ((log_f.detach() - baseline.detach())*ll_action_q).mean(1)
         kl = (ll_action_q - ll_action_p).mean(1).detach()
         ll_word = ll_word.mean(1)
         train_q_entropy += q_entropy.sum().item()
       else:
         gold_actions = gold_binary_trees
-        ll_action_q = model.forward_tree(sents, gold_actions, has_eos=True)        
+        ll_action_q = model.forward_tree(sents, gold_actions, has_eos=True)
         ll_word, ll_action_p, all_actions = model.forward_actions(sents, gold_actions)
         obj = ll_word + ll_action_p + ll_action_q
         kl = -ll_action_q
@@ -177,11 +177,11 @@ def main(args):
       actions = all_actions[:, 0].long().cpu()
       train_nll_recon += -ll_word.sum().item()
       train_kl += kl.sum().item()
-      (-obj.mean()).backward()      
+      (-obj.mean()).backward()
       if args.max_grad_norm > 0:
-        torch.nn.utils.clip_grad_norm_(model_params + action_params, args.max_grad_norm)        
+        torch.nn.utils.clip_grad_norm_(model_params + action_params, args.max_grad_norm)
       if args.q_max_grad_norm > 0:
-        torch.nn.utils.clip_grad_norm_(q_params, args.q_max_grad_norm)        
+        torch.nn.utils.clip_grad_norm_(q_params, args.q_max_grad_norm)
       q_optimizer.step()
       optimizer.step()
       action_optimizer.step()
@@ -200,18 +200,18 @@ def main(args):
                   '|Param|: %.2f, BestValPerf: %.2f, BestValF1: %.2f, KLPen: %.4f, ' + \
                   'GoldTreeF1: %.2f, Throughput: %.2f examples/sec'
         print(log_str %
-              (epoch, b, len(train_data), args.lr, args.q_lr, train_q_entropy / num_sents, 
+              (epoch, b, len(train_data), args.lr, args.q_lr, train_q_entropy / num_sents,
                np.exp((train_nll_recon + train_kl)/ num_words),
-               np.exp(train_nll_recon/num_words), train_kl / num_sents, 
+               np.exp(train_nll_recon/num_words), train_kl / num_sents,
                np.exp(train_nll_iwae/num_words),
-               param_norm, best_val_ppl, best_val_f1, kl_pen, 
+               param_norm, best_val_ppl, best_val_f1, kl_pen,
                all_f1[0], num_sents / (time.time() - start_time)))
         sent_str = [train_data.idx2word[word_idx] for word_idx in list(sents[-1][1:-1].cpu().numpy())]
         print("PRED:", get_tree(action[:-2], sent_str))
         print("GOLD:", get_tree(gold_binary_trees[-1], sent_str))
     print('--------------------------------')
-    print('Checking validation perf...')    
-    val_ppl, val_f1 = eval(val_data, model, 
+    print('Checking validation perf...')
+    val_ppl, val_f1 = eval(val_data, model,
                            samples = args.mc_samples, count_eos_ppl = args.count_eos_ppl)
     print('--------------------------------')
     if val_ppl < best_val_ppl:
@@ -225,7 +225,7 @@ def main(args):
       }
       print('Saving checkpoint to %s' % args.save_path)
       torch.save(checkpoint, args.save_path)
-      model.to()
+      model.to(torch.get_default_device())
     else:
       if epoch > args.min_epochs:
         decay = 1
@@ -251,26 +251,26 @@ def eval(data, model, samples = 0, count_eos_ppl = 0):
   total_kl = 0.
   total_nll_iwae = 0.
   corpus_f1 = [0., 0., 0.]
-  sent_f1 = [] 
+  sent_f1 = []
   with torch.no_grad():
     for i in list(reversed(range(len(data)))):
-      sents, length, batch_size, gold_actions, gold_spans, gold_binary_trees, other_data = data[i] 
+      sents, length, batch_size, gold_actions, gold_spans, gold_binary_trees, other_data = data[i]
       if length == 1: # length 1 sents are ignored since URNNG needs at least length 2 sents
         continue
       if args.count_eos_ppl == 1:
         tree_length = length
-        length += 1 
+        length += 1
       else:
-        sents = sents[:, :-1] 
+        sents = sents[:, :-1]
         tree_length = length
-      sents = sents.to()
-      ll_word_all, ll_action_p_all, ll_action_q_all, actions_all, q_entropy = model(sents, 
+      sents = sents.to(torch.get_default_device())
+      ll_word_all, ll_action_p_all, ll_action_q_all, actions_all, q_entropy = model(sents,
                     samples = samples, has_eos = count_eos_ppl == 1)
       ll_word, ll_action_p, ll_action_q = ll_word_all.mean(1), ll_action_p_all.mean(1), ll_action_q_all.mean(1)
       kl = ll_action_q - ll_action_p
       _, binary_matrix, argmax_spans = model.q_crf._viterbi(model.scores)
       actions = []
-      for b in range(batch_size):        
+      for b in range(batch_size):
         tree = get_tree_from_binary_matrix(binary_matrix[b], tree_length)
         actions.append(get_actions(tree))
       actions = torch.Tensor(actions).long()
@@ -285,14 +285,14 @@ def eval(data, model, samples = 0, count_eos_ppl = 0):
           ll_word_j, ll_action_p_j, ll_action_q_j = ll_word_all[:, j], ll_action_p_all[:, j], ll_action_q_all[:, j]
           sample_ll[:, j].copy_(ll_word_j + ll_action_p_j - ll_action_q_j)
         ll_iwae = model.logsumexp(sample_ll, 1) - np.log(samples)
-        total_nll_iwae -= ll_iwae.sum().item()      
+        total_nll_iwae -= ll_iwae.sum().item()
       for b in range(batch_size):
         action = list(actions[b].numpy())
         span_b = get_spans(action)
         span_b = argmax_spans[b]
-        span_b_set = set(span_b[:-1])        
+        span_b_set = set(span_b[:-1])
         gold_b_set = set(gold_spans[b][:-1])
-        tp, fp, fn = get_stats(span_b_set, gold_b_set) 
+        tp, fp, fn = get_stats(span_b_set, gold_b_set)
         corpus_f1[0] += tp
         corpus_f1[1] += fp
         corpus_f1[2] += fn
@@ -304,12 +304,12 @@ def eval(data, model, samples = 0, count_eos_ppl = 0):
         prec = float(len(overlap)) / (len(model_out) + 1e-8)
         reca = float(len(overlap)) / (len(std_out) + 1e-8)
         if len(std_out) == 0:
-          reca = 1. 
+          reca = 1.
           if len(model_out) == 0:
             prec = 1.
         f1 = 2 * prec * reca / (prec + reca + 1e-8)
         sent_f1.append(f1)
-  tp, fp, fn = corpus_f1  
+  tp, fp, fn = corpus_f1
   prec = tp / (tp + fp)
   recall = tp / (tp + fn)
   corpus_f1 = 2*prec*recall/(prec+recall)*100 if prec+recall > 0 else 0.
@@ -318,8 +318,8 @@ def eval(data, model, samples = 0, count_eos_ppl = 0):
   elbo_ppl = np.exp((total_nll_recon + total_kl) / num_words)
   recon_ppl = np.exp(total_nll_recon / num_words)
   iwae_ppl = np.exp(total_nll_iwae /num_words)
-  kl = total_kl / num_sents  
-  print('ElboPPL: %.2f, ReconPPL: %.2f, KL: %.4f, IwaePPL: %.2f, CorpusF1: %.2f, SentAvgF1: %.2f' % 
+  kl = total_kl / num_sents
+  print('ElboPPL: %.2f, ReconPPL: %.2f, KL: %.4f, IwaePPL: %.2f, CorpusF1: %.2f, SentAvgF1: %.2f' %
         (elbo_ppl, recon_ppl, kl, iwae_ppl, corpus_f1, sent_f1))
   #note that corpus F1 printed here is different from what you should get from
   #evalb since we do not ignore any tags (e.g. punctuation), while evalb ignores it
